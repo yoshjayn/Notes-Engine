@@ -1,82 +1,91 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const dotenv = require('dotenv');
-
-// Load env vars
-dotenv.config();
-
-// Import routes
-const authRoutes = require('./routes/auth');
-const noteRoutes = require('./routes/notes');
-const labelRoutes = require('./routes/labels');
-
-// Import error handler
-const errorHandler = require('./middleware/error');
+require('dotenv').config();
 
 const app = express();
 
-// Body parser
+// Middleware
 app.use(express.json());
-
-// Enable CORS
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://your-frontend-domain.vercel.app'] // Add your frontend domain here
+    : ['http://localhost:3000', 'http://localhost:5173'],
   credentials: true
 }));
 
-// Connect to MongoDB
+// Health check route
+app.get('/', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'Notes Engine API is running!',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Import routes
+const authRoutes = require('./routes/auth');
+const notesRoutes = require('./routes/notes');
+const labelsRoutes = require('./routes/labels');
+
+// Use routes
+app.use('/api/auth', authRoutes);
+app.use('/api/notes', notesRoutes);
+app.use('/api/labels', labelsRoutes);
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Error:', err.message);
+  res.status(err.status || 500).json({
+    success: false,
+    error: process.env.NODE_ENV === 'production' 
+      ? 'Something went wrong!' 
+      : err.message
+  });
+});
+
+// 404 handler
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Route not found'
+  });
+});
+
+// MongoDB connection
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/notes-app');
-    console.log('MongoDB Connected');
-  } catch (err) {
-    console.error('MongoDB connection error:', err);
+    if (!process.env.MONGODB_URI) {
+      throw new Error('MONGODB_URI is not defined in environment variables');
+    }
+    
+    await mongoose.connect(process.env.MONGODB_URI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log('MongoDB connected successfully');
+  } catch (error) {
+    console.error('MongoDB connection error:', error.message);
     process.exit(1);
   }
 };
 
-// Routes
-
-app.get("/",(req,res)=>{
-  res.status(200).json({
-    message:"Hello World"
-  })
-})
-app.use('/api/auth', authRoutes);
-app.use('/api/notes', noteRoutes);
-app.use('/api/labels', labelRoutes);
-
-// Health check route
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Server is running' });
-});
-
-// Error handler middleware (should be last)
-app.use(errorHandler);
-
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ success: false, error: 'Route not found' });
-});
-
-const PORT = process.env.PORT || 5000;
-
-// Start server
+// Start server function
 const startServer = async () => {
   await connectDB();
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  
+  const PORT = process.env.PORT || 5000;
+  
+  // For Vercel, we don't need to listen on a port
+  if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  }
 };
 
-startServer();
+// Initialize server
+startServer().catch(console.error);
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err, promise) => {
-  console.log(`Error: ${err.message}`);
-  // Close server & exit process
-  process.exit(1);
-});
-
+// Export for Vercel
 module.exports = app;
